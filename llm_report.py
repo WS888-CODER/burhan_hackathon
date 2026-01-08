@@ -10,7 +10,7 @@ Original file is located at
 import cohere
 import os
 
-co = cohere.Client(os.getenv("1wCbOP1IL8mbAyUsKQriwd7MyeClpWYc4v1DPBLe"))
+co = cohere.Client(os.getenv("COHERE_API_KEY"))
 
 def generate_llm_report(summary_text):
     prompt = f"""
