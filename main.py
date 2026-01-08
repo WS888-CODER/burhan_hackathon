@@ -9,7 +9,7 @@ from llm_report import generate_llm_report
 app = FastAPI()
 
 # استخدام Environment Variable لتوكن Hugging Face
-HF_TOKEN = os.getenv("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")
+HF_TOKEN = os.getenv("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")
 MODEL = "tarteel-ai/whisper-base-ar-quran"
 
 # تحميل القرآن
