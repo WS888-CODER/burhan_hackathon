@@ -9,14 +9,14 @@ from llm_report import generate_llm_report
 
 app = FastAPI()
 
-# تحميل المودل مرة واحدة عند البداية
+# استخدم Whisper الأصلي - أصغر وأسرع
 print("[STARTUP] Loading Whisper model...")
 whisper_pipeline = pipeline(
     "automatic-speech-recognition",
-    model="tarteel-ai/whisper-base-ar-quran",
-    device=-1  # استخدام CPU
+    model="openai/whisper-small",  # ← مودل أصلي من OpenAI
+    device=-1  # CPU
 )
-print("[STARTUP] Model loaded successfully!")
+print("[STARTUP] Model loaded!")
 
 # تحميل القرآن
 with open("quran.json", "r", encoding="utf-8") as f:
@@ -33,37 +33,33 @@ def health_check():
 @app.post("/analyze")
 async def analyze(audio: UploadFile = File(...)):
     print("=" * 50)
-    print("[START] Processing audio...")
+    print("[START] Processing...")
     
-    # قراءة الملف
     audio_bytes = await audio.read()
-    
-    # حفظ مؤقت
     temp_path = f"/tmp/{audio.filename}"
+    
     with open(temp_path, "wb") as f:
         f.write(audio_bytes)
     
-    print("[INFO] Running transcription...")
+    print("[INFO] Transcribing...")
     
     try:
-        # تحويل الصوت لنص
         result = whisper_pipeline(temp_path)
         text_read = result["text"]
-        print(f"[INFO] Transcribed: {text_read}")
+        print(f"[SUCCESS] Text: {text_read}")
         
     except Exception as e:
         print(f"[ERROR] {str(e)}")
         return {"report_text": f"خطأ: {str(e)}"}
     finally:
-        # حذف الملف المؤقت
         if os.path.exists(temp_path):
             os.remove(temp_path)
     
     if not text_read:
         return {"report_text": "لم يتم التعرف على الصوت"}
 
-    # باقي الكود
     ayah, score = find_best_match(text_read, QURAN)
+    print(f"[MATCH] Ayah: {ayah}, Score: {score}")
     
     if ayah:
         surah, ayah_num = ayah.split(":")
@@ -71,9 +67,7 @@ async def analyze(audio: UploadFile = File(...)):
         summary_text, _ = generate_summary(matches)
         report = generate_llm_report(summary_text)
     else:
-        report = "لم يتم العثور على مطابقة في القرآن"
+        report = "لم يتم العثور على مطابقة"
 
-    print("[SUCCESS]")
-    print("=" * 50)
-    
+    print("[DONE]")
     return {"report_text": report}
