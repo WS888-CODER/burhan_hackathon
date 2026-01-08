@@ -4,3 +4,4 @@ requests
 python-multipart
 rapidfuzz
 cohere
+huggingface-hub
