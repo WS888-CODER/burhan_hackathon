@@ -16,6 +16,28 @@ MODEL = "tarteel-ai/whisper-base-ar-quran"
 with open("quran.json", "r", encoding="utf-8") as f:
     QURAN = json.load(f)
 
+@app.get("/")
+def root():
+    return {
+        "status": "API is running",
+        "hf_token_configured": HF_TOKEN is not None and len(HF_TOKEN) > 0,
+        "cohere_token_configured": os.getenv("COHERE_API_KEY") is not None,
+        "endpoints": {
+            "root": "/ (GET)",
+            "health": "/health (GET)",
+            "analyze": "/analyze (POST with audio file)",
+            "docs": "/docs (GET - API documentation)"
+        }
+    }
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "healthy",
+        "hf_token_set": HF_TOKEN is not None and len(HF_TOKEN) > 0,
+        "cohere_token_set": os.getenv("COHERE_API_KEY") is not None
+    }
+
 @app.post("/analyze")
 async def analyze(audio: UploadFile = File(...)):
     # قراءة ملف الصوت
