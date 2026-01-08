@@ -1,3 +1,37 @@
+from fastapi import FastAPI, UploadFile, File
+import requests
+import os
+import json
+
+from utils import find_best_match, generate_summary
+from llm_report import generate_llm_report
+
+app = FastAPI()  # ← هذا السطر ناقص عندك!
+
+# استخدام Environment Variable لتوكن Hugging Face
+HF_TOKEN = os.getenv("HF_TOKEN")
+MODEL = "tarteel-ai/whisper-base-ar-quran"
+
+# تحميل القرآن
+with open("quran.json", "r", encoding="utf-8") as f:
+    QURAN = json.load(f)
+
+@app.get("/")
+def root():
+    return {
+        "status": "API is running",
+        "hf_token_configured": HF_TOKEN is not None and len(HF_TOKEN) > 0,
+        "cohere_token_configured": os.getenv("COHERE_API_KEY") is not None
+    }
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "healthy",
+        "hf_token_set": HF_TOKEN is not None and len(HF_TOKEN) > 0,
+        "cohere_token_set": os.getenv("COHERE_API_KEY") is not None
+    }
+
 @app.post("/analyze")
 async def analyze(audio: UploadFile = File(...)):
     print("=" * 50)
@@ -11,7 +45,7 @@ async def analyze(audio: UploadFile = File(...)):
     audio_bytes = await audio.read()
     print(f"[INFO] Audio file size: {len(audio_bytes)} bytes")
 
-    # الطريقة الصحيحة! ← هنا التعديل
+    # الطريقة الصحيحة
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     
     print(f"[INFO] Sending request to HF API...")
@@ -20,7 +54,7 @@ async def analyze(audio: UploadFile = File(...)):
         response = requests.post(
             f"https://api-inference.huggingface.co/models/{MODEL}",
             headers=headers,
-            data=audio_bytes,  # ← أرسل البيانات مباشرة!
+            data=audio_bytes,
             timeout=60
         )
         
@@ -38,7 +72,7 @@ async def analyze(audio: UploadFile = File(...)):
             "error": response.text
         }
 
-    # باقي الكود نفسه...
+    # باقي الكود
     response_data = response.json()
     text_read = response_data.get("text", "")
     
