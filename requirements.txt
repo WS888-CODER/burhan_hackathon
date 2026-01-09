@@ -3,5 +3,4 @@ uvicorn
 python-multipart
 rapidfuzz
 cohere
-transformers
-torch
+huggingface-hub
