@@ -1,8 +1,7 @@
 from fastapi import FastAPI, UploadFile, File
-import requests
 import os
 import json
-import time
+from huggingface_hub import InferenceClient
 
 from utils import find_best_match, generate_summary
 from llm_report import generate_llm_report
@@ -10,6 +9,9 @@ from llm_report import generate_llm_report
 app = FastAPI()
 
 HF_TOKEN = os.getenv("HF_TOKEN")
+
+# إنشاء Client بالطريقة الصحيحة
+client = InferenceClient(api_key=HF_TOKEN) if HF_TOKEN else None
 
 with open("quran.json", "r", encoding="utf-8") as f:
     QURAN = json.load(f)
@@ -20,73 +22,59 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "token_set": HF_TOKEN is not None}
 
 @app.post("/analyze")
 async def analyze(audio: UploadFile = File(...)):
-    if not HF_TOKEN:
+    if not client:
         return {"report_text": "التوكن غير موجود"}
+    
+    print("[START] Processing audio...")
     
     audio_bytes = await audio.read()
     
-    # استخدم Serverless Inference API الجديد
-    API_URL = "https://api-inference.huggingface.co/models/openai/whisper-tiny"
-    headers = {
-        "Authorization": f"Bearer {HF_TOKEN}",
-        "Content-Type": "application/octet-stream"
-    }
+    # حفظ مؤقت
+    temp_path = f"/tmp/{audio.filename}"
+    with open(temp_path, "wb") as f:
+        f.write(audio_bytes)
     
-    print(f"[INFO] Sending audio to Whisper API...")
-    
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = requests.post(
-                API_URL,
-                headers=headers,
-                data=audio_bytes,
-                timeout=60
-            )
-            
-            print(f"[RESPONSE] Status: {response.status_code}")
-            print(f"[RESPONSE] Body: {response.text[:200]}")
-            
-            if response.status_code == 200:
-                result = response.json()
-                text_read = result.get("text", "")
-                break
-            elif response.status_code == 503:
-                # Model is loading, wait and retry
-                print(f"[INFO] Model loading, retry {attempt + 1}/{max_retries}...")
-                time.sleep(10)
-                continue
-            else:
-                return {
-                    "report_text": f"خطأ في الاتصال",
-                    "status": response.status_code,
-                    "details": response.text
-                }
-                
-        except Exception as e:
-            print(f"[ERROR] {str(e)}")
-            if attempt < max_retries - 1:
-                time.sleep(5)
-                continue
-            return {"report_text": f"خطأ: {str(e)}"}
+    try:
+        # استخدام الطريقة الصحيحة
+        result = client.automatic_speech_recognition(
+            temp_path,
+            model="openai/whisper-tiny"
+        )
+        
+        print(f"[RESULT] {result}")
+        
+        # استخراج النص
+        if isinstance(result, dict):
+            text_read = result.get("text", "")
+        else:
+            text_read = str(result)
+        
+        print(f"[TEXT] {text_read}")
+        
+    except Exception as e:
+        print(f"[ERROR] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {"report_text": f"خطأ: {str(e)}"}
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
     
     if not text_read:
-        return {"report_text": "لم يتم التعرف على الصوت"}
+        return {"report_text": "لم يتم التعرف"}
 
-    print(f"[TRANSCRIBED] {text_read}")
-    
     ayah, score = find_best_match(text_read, QURAN)
-    print(f"[MATCH] Ayah: {ayah}, Score: {score}")
     
     if ayah:
         surah, ayah_num = ayah.split(":")
         summary_text, _ = generate_summary([{"surah": surah, "ayah": ayah_num, "score": score}])
         report = generate_llm_report(summary_text)
     else:
-        report = "لم يتم العثور على مطابقة في القرآن"
+        report = "لم يتم العثور على مطابقة"
 
+    print("[DONE]")
     return {"report_text": report}
