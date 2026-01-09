@@ -1,73 +1,63 @@
 from fastapi import FastAPI, UploadFile, File
+import requests
 import os
 import json
-import torch
-from transformers import pipeline
 
 from utils import find_best_match, generate_summary
 from llm_report import generate_llm_report
 
 app = FastAPI()
 
-# استخدم Whisper الأصلي - أصغر وأسرع
-print("[STARTUP] Loading Whisper model...")
-whisper_pipeline = pipeline(
-    "automatic-speech-recognition",
-    model="openai/whisper-small",  # ← مودل أصلي من OpenAI
-    device=-1  # CPU
-)
-print("[STARTUP] Model loaded!")
+HF_TOKEN = os.getenv("HF_TOKEN")
 
-# تحميل القرآن
 with open("quran.json", "r", encoding="utf-8") as f:
     QURAN = json.load(f)
 
 @app.get("/")
 def root():
-    return {"status": "API is running"}
+    return {"status": "running"}
 
 @app.get("/health")
-def health_check():
+def health():
     return {"status": "healthy"}
 
 @app.post("/analyze")
 async def analyze(audio: UploadFile = File(...)):
-    print("=" * 50)
-    print("[START] Processing...")
+    if not HF_TOKEN:
+        return {"report_text": "التوكن غير موجود"}
     
     audio_bytes = await audio.read()
-    temp_path = f"/tmp/{audio.filename}"
     
-    with open(temp_path, "wb") as f:
-        f.write(audio_bytes)
-    
-    print("[INFO] Transcribing...")
+    # جرّب مودل OpenAI الصغير عبر API
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     
     try:
-        result = whisper_pipeline(temp_path)
-        text_read = result["text"]
-        print(f"[SUCCESS] Text: {text_read}")
+        response = requests.post(
+            "https://api-inference.huggingface.co/models/openai/whisper-tiny",
+            headers=headers,
+            data=audio_bytes,
+            timeout=30
+        )
         
+        if response.status_code == 200:
+            result = response.json()
+            text_read = result.get("text", "")
+        else:
+            return {"report_text": f"خطأ: {response.status_code}"}
+            
     except Exception as e:
-        print(f"[ERROR] {str(e)}")
         return {"report_text": f"خطأ: {str(e)}"}
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
     
     if not text_read:
-        return {"report_text": "لم يتم التعرف على الصوت"}
+        return {"report_text": "لم يتم التعرف"}
 
     ayah, score = find_best_match(text_read, QURAN)
-    print(f"[MATCH] Ayah: {ayah}, Score: {score}")
     
     if ayah:
         surah, ayah_num = ayah.split(":")
-        matches = [{"surah": surah, "ayah": ayah_num, "score": score}]
-        summary_text, _ = generate_summary(matches)
+        summary_text, _ = generate_summary([{"surah": surah, "ayah": ayah_num, "score": score}])
         report = generate_llm_report(summary_text)
     else:
         report = "لم يتم العثور على مطابقة"
 
-    print("[DONE]")
     return {"report_text": report}
