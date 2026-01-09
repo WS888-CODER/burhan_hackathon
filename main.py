@@ -1,9 +1,8 @@
 from fastapi import FastAPI, UploadFile, File
+import requests
 import os
 import json
-import sys
-import traceback
-from huggingface_hub import InferenceClient
+import time
 
 from utils import find_best_match, generate_summary
 from llm_report import generate_llm_report
@@ -11,9 +10,6 @@ from llm_report import generate_llm_report
 app = FastAPI()
 
 HF_TOKEN = os.getenv("HF_TOKEN")
-
-# إنشاء Client
-client = InferenceClient(api_key=HF_TOKEN) if HF_TOKEN else None
 
 with open("quran.json", "r", encoding="utf-8") as f:
     QURAN = json.load(f)
@@ -24,79 +20,54 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "healthy", "token_set": HF_TOKEN is not None}
+    return {"status": "healthy"}
 
 @app.post("/analyze")
 async def analyze(audio: UploadFile = File(...)):
-    if not client:
+    if not HF_TOKEN:
         return {"report_text": "التوكن غير موجود"}
     
-    print("=" * 80)
-    print("[START] Processing audio...")
-    print(f"[INFO] Filename: {audio.filename}")
+    print("=" * 60)
+    print("[START] Processing...")
     
     audio_bytes = await audio.read()
-    print(f"[INFO] Audio size: {len(audio_bytes)} bytes")
+    print(f"[INFO] Size: {len(audio_bytes)} bytes")
     
-    # حفظ مؤقت
-    temp_path = f"/tmp/{audio.filename}"
-    print(f"[INFO] Temp path: {temp_path}")
+    # استخدم Whisper عبر Inference API
+    API_URL = "https://api-inference.huggingface.co/models/openai/whisper-tiny"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     
-    try:
-        with open(temp_path, "wb") as f:
-            f.write(audio_bytes)
-        print(f"[INFO] File saved to temp")
-        
-        print(f"[INFO] Calling HF API...")
-        
-        # استخدام الطريقة الصحيحة
-        result = client.automatic_speech_recognition(
-            temp_path,
-            model="openai/whisper-tiny"
-        )
-        
-        print(f"[SUCCESS] Got result!")
-        print(f"[RESULT] Type: {type(result)}")
-        print(f"[RESULT] Content: {result}")
-        
-        # استخراج النص
-        if isinstance(result, dict):
-            text_read = result.get("text", "")
-        else:
-            text_read = str(result)
-        
-        print(f"[TEXT] {text_read}")
-        
-    except Exception as e:
-        error_type = type(e).__name__
-        error_msg = str(e)
-        error_trace = traceback.format_exc()
-        
-        print(f"[ERROR] Type: {error_type}")
-        print(f"[ERROR] Message: {error_msg}")
-        print(f"[ERROR] Traceback:")
-        print(error_trace)
-        
-        # اطبع كل التفاصيل
-        exc_type, exc_value, exc_traceback = sys.exc_info()
-        print(f"[ERROR] Exception info: {exc_type}, {exc_value}")
-        
+    # أول محاولة
+    print("[INFO] Calling Hugging Face...")
+    response = requests.post(API_URL, headers=headers, data=audio_bytes)
+    
+    print(f"[RESPONSE] Status: {response.status_code}")
+    
+    # إذا 503 = المودل يحمّل، انتظر وحاول مرة ثانية
+    if response.status_code == 503:
+        print("[INFO] Model loading, waiting 20s...")
+        time.sleep(20)
+        response = requests.post(API_URL, headers=headers, data=audio_bytes)
+        print(f"[RESPONSE] Status after retry: {response.status_code}")
+    
+    if response.status_code != 200:
+        print(f"[ERROR] {response.text}")
         return {
-            "report_text": f"خطأ: {error_msg}",
-            "error_type": error_type,
-            "traceback": error_trace
+            "report_text": "حصل خطأ في الاتصال",
+            "status": response.status_code,
+            "error": response.text[:200]
         }
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-            print(f"[INFO] Temp file deleted")
+    
+    result = response.json()
+    text_read = result.get("text", "")
+    
+    print(f"[TEXT] {text_read}")
     
     if not text_read:
         return {"report_text": "لم يتم التعرف"}
 
-    print(f"[INFO] Finding match...")
     ayah, score = find_best_match(text_read, QURAN)
-    print(f"[MATCH] Ayah: {ayah}, Score: {score}")
+    print(f"[MATCH] {ayah} - {score}")
     
     if ayah:
         surah, ayah_num = ayah.split(":")
@@ -106,5 +77,5 @@ async def analyze(audio: UploadFile = File(...)):
         report = "لم يتم العثور على مطابقة"
 
     print("[DONE]")
-    print("=" * 80)
+    print("=" * 60)
     return {"report_text": report}
