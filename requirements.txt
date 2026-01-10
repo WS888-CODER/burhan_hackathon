@@ -1,6 +1,9 @@
 fastapi
 uvicorn
-requests
 python-multipart
 rapidfuzz
 cohere
+transformers
+torch
+librosa
+soundfile
